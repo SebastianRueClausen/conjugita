@@ -4,8 +4,8 @@ use std::{collections::HashMap, fmt};
 
 use clap::Parser;
 use colored::Colorize;
-use rand::distributions::{Distribution, Standard};
-use rand::seq::SliceRandom;
+use rand::distr::{Distribution, StandardUniform};
+use rand::prelude::IndexedRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -153,9 +153,9 @@ impl fmt::Display for Person {
     }
 }
 
-impl Distribution<Person> for Standard {
+impl Distribution<Person> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Person {
-        match rng.gen_range(0..3) {
+        match rng.random_range(0..3) {
             0 => Person::First,
             1 => Person::Second,
             _ => Person::Third,
@@ -178,9 +178,9 @@ impl fmt::Display for Number {
     }
 }
 
-impl Distribution<Number> for Standard {
+impl Distribution<Number> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Number {
-        match rng.gen_range(0..2) {
+        match rng.random_range(0..2) {
             0 => Number::Singular,
             _ => Number::Plural,
         }
@@ -208,9 +208,9 @@ impl fmt::Display for IndicativeTense {
     }
 }
 
-impl Distribution<IndicativeTense> for Standard {
+impl Distribution<IndicativeTense> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> IndicativeTense {
-        match rng.gen_range(0..5) {
+        match rng.random_range(0..5) {
             0 => IndicativeTense::Present,
             1 => IndicativeTense::Preterite,
             2 => IndicativeTense::Imperfect,
@@ -237,9 +237,9 @@ impl fmt::Display for SubjunctiveTense {
     }
 }
 
-impl Distribution<SubjunctiveTense> for Standard {
+impl Distribution<SubjunctiveTense> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> SubjunctiveTense {
-        match rng.gen_range(0..3) {
+        match rng.random_range(0..3) {
             0 => SubjunctiveTense::Present,
             1 => SubjunctiveTense::Imperfect,
             _ => SubjunctiveTense::Future,
@@ -262,9 +262,9 @@ impl fmt::Display for ImperativeTense {
     }
 }
 
-impl Distribution<ImperativeTense> for Standard {
+impl Distribution<ImperativeTense> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> ImperativeTense {
-        match rng.gen_range(0..2) {
+        match rng.random_range(0..2) {
             0 => ImperativeTense::Affirmative,
             _ => ImperativeTense::Negative,
         }
@@ -311,20 +311,20 @@ impl fmt::Display for Conjugation {
     }
 }
 
-impl Distribution<Conjugation> for Standard {
+impl Distribution<Conjugation> for StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Conjugation {
-        match rng.gen_range(0..6) {
-            0 => Conjugation::Indicative(rng.gen(), rng.gen(), rng.gen()),
-            1 => Conjugation::Subjunctive(rng.gen(), rng.gen(), rng.gen()),
+        match rng.random_range(0..6) {
+            0 => Conjugation::Indicative(rng.random(), rng.random(), rng.random()),
+            1 => Conjugation::Subjunctive(rng.random(), rng.random(), rng.random()),
             2 => loop {
-                let (person, number) = (rng.gen(), rng.gen());
+                let (person, number) = (rng.random(), rng.random());
                 if !(person == Person::First && number == Number::Singular) {
-                    break Conjugation::Imperative(rng.gen(), person, number);
+                    break Conjugation::Imperative(rng.random(), person, number);
                 }
             },
-            3 => Conjugation::Progressive(rng.gen(), rng.gen(), rng.gen()),
-            4 => Conjugation::Perfect(rng.gen(), rng.gen(), rng.gen()),
-            _ => Conjugation::SubjunctivePerfect(rng.gen(), rng.gen(), rng.gen()),
+            3 => Conjugation::Progressive(rng.random(), rng.random(), rng.random()),
+            4 => Conjugation::Perfect(rng.random(), rng.random(), rng.random()),
+            _ => Conjugation::SubjunctivePerfect(rng.random(), rng.random(), rng.random()),
         }
     }
 }
@@ -1064,7 +1064,7 @@ fn highlight_irregular_letters(verb: &Verb, conjugation: &Conjugation, irregular
 
 pub fn cli() {
     let cli = Cli::parse();
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let verbs: HashMap<String, Verb> = ron::de::from_str(include_str!("verbs.ron")).unwrap();
     let verbs: Vec<_> = verbs.values().cloned().collect();
@@ -1072,7 +1072,7 @@ pub fn cli() {
     match cli.command {
         Command::Conjugate => {
             let verb = verbs.choose(&mut rng).unwrap();
-            let conjugation: Conjugation = rng.gen();
+            let conjugation: Conjugation = rng.random();
             let translation = conjugate_translation(&verb.translation, &conjugation);
             let answer = conjugate(verb, &conjugation, true);
 
