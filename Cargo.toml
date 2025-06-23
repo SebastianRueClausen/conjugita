@@ -10,3 +10,10 @@ ron = "0.10.1"
 clap = { version = "4.5.40", features = ["derive"] }
 seal = "0.1.5"
 colored = "3.0"
+conjugita_types = { path = "crates/conjugita_types" }
+bincode = { version = "2.0.1", features = ["serde"] }
+
+[build-dependencies]
+conjugita_types = { path = "crates/conjugita_types" }
+ron = "0.10.1"
+bincode = { version = "2.0.1", features = ["serde"] }
