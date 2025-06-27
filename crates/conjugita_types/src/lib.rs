@@ -1,6 +1,6 @@
+use multimap::MultiMap;
 use rand::distr::{Distribution, StandardUniform};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -35,6 +35,16 @@ pub enum Regularity {
     Irregular,
 }
 
+impl Regularity {
+    pub fn combine(self, other: Self) -> Self {
+        if self == Self::Irregular || other == Self::Irregular {
+            Self::Irregular
+        } else {
+            Self::Regular
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Reflexiveness {
     Reflexive,
@@ -67,7 +77,7 @@ pub struct Verb {
     pub irregular_future_stem: Option<String>,
     pub irregular_gerund: Option<String>,
     pub irregular_past_participle: Option<String>,
-    pub irregulars: HashMap<Conjugation, String>,
+    pub irregulars: MultiMap<Conjugation, String>,
     pub translation: Translation,
 }
 
@@ -278,6 +288,7 @@ pub enum Conjugation {
     Imperative(ImperativeTense, Person, Number),
     Progressive(IndicativeTense, Person, Number),
     Perfect(IndicativeTense, Person, Number),
+    // SubjunctiveProgressive
     SubjunctivePerfect(SubjunctiveTense, Person, Number),
 }
 

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io;
 use std::ops::Range;
 
@@ -10,7 +9,7 @@ use conjugita_types::{
 };
 use conjugita_types::{IndicativeTense, Verb};
 use rand::prelude::IndexedRandom;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
 fn english_pronoun(person: Person, number: Number) -> &'static str {
     match (person, number) {
@@ -32,10 +31,10 @@ fn english_present_to_be(person: Person, number: Number) -> &'static str {
     }
 }
 
-fn english_past_to_be(number: Number) -> &'static str {
-    match number {
-        Number::Singular => "was",
-        Number::Plural => "were",
+fn english_past_to_be(person: Person, number: Number) -> &'static str {
+    match (number, person) {
+        (Number::Singular, Person::Second) | (Number::Plural, _) => "were",
+        (Number::Singular, _) => "was",
     }
 }
 
@@ -79,7 +78,7 @@ fn conjugate_translation(translation: &Translation, conjugation: &Conjugation) -
             }
             IndicativeTense::Imperfect => {
                 let pronoun = english_pronoun(person, number);
-                let to_be = english_past_to_be(number);
+                let to_be = english_past_to_be(person, number);
                 match translation.kind {
                     TranslationKind::ToDoSomething => {
                         format!(
@@ -100,7 +99,7 @@ fn conjugate_translation(translation: &Translation, conjugation: &Conjugation) -
             }
             IndicativeTense::Preterite => {
                 let pronoun = english_pronoun(person, number);
-                let to_be = english_past_to_be(number);
+                let to_be = english_past_to_be(person, number);
                 match translation.kind {
                     TranslationKind::ToDoSomething => {
                         format!("{pronoun} {}", translation.past)
@@ -183,11 +182,11 @@ fn conjugate_translation(translation: &Translation, conjugation: &Conjugation) -
                 },
                 IndicativeTense::Preterite | IndicativeTense::Imperfect => match translation.kind {
                     TranslationKind::ToDoSomething | TranslationKind::ToBeSomething => {
-                        let to_be = english_past_to_be(number);
+                        let to_be = english_past_to_be(person, number);
                         format!("{pronoun} {to_be} {}", translation.gerund)
                     }
                     TranslationKind::ToBe => {
-                        let to_be = english_past_to_be(number);
+                        let to_be = english_past_to_be(person, number);
                         format!("{pronoun} {to_be} being")
                     }
                 },
@@ -254,7 +253,7 @@ impl Explination {
         let stem = &conjugated[self.stem_range.clone()];
         let ending = &conjugated[self.ending_range.clone()];
         format!(
-            "\"{prefix}{}{}{postfix}\"\n\tstem \"{}\": {}\n\tending \"{}\": {}",
+            "\t\t\"{prefix}{}{}{postfix}\"\n\t\t\tstem \"{}\": {}\n\t\t\tending \"{}\": {}",
             stem.red(),
             ending.green(),
             stem.red(),
@@ -267,25 +266,34 @@ impl Explination {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Conjugated {
-    regularity: Regularity,
-    conjugated: String,
+    word: String,
     explination: Option<Explination>,
 }
 
-fn conjugate(verb: &Verb, conjugation: &Conjugation, use_irregular: bool) -> Conjugated {
+/// Conjugate `Verb` according to `Conjugation`.
+///
+/// If `use_irregular` is `false`, it will conjugate as if the verb is regular no matter what.
+fn conjugate(
+    verb: &Verb,
+    conjugation: &Conjugation,
+    use_irregular: bool,
+) -> (Regularity, Vec<Conjugated>) {
     if use_irregular {
-        if let Some(word) = verb.irregulars.get(conjugation) {
-            return Conjugated {
-                regularity: Regularity::Irregular,
-                conjugated: word.clone(),
-                explination: None,
-            };
+        if let Some(words) = verb.irregulars.get_vec(conjugation) {
+            let conjugated = words
+                .iter()
+                .map(|word| Conjugated {
+                    explination: None,
+                    word: word.clone(),
+                })
+                .collect();
+            return (Regularity::Irregular, conjugated);
         }
     }
 
     let mut regularity = Regularity::Regular;
 
-    let conjugated = match *conjugation {
+    let words = match *conjugation {
         Conjugation::Indicative(tense, person, number) => {
             let (ending, ending_comment) = match tense {
                 IndicativeTense::Preterite => {
@@ -419,26 +427,25 @@ fn conjugate(verb: &Verb, conjugation: &Conjugation, use_irregular: bool) -> Con
                 };
                 (stem, comment)
             };
-            let conjugated = if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number)
-            {
+            let word = if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
                 format!("{reflexive_pronoun} {}{ending}", stem)
             } else {
                 format!("{}{ending}", stem)
             };
-            return Conjugated {
+            let words = vec![Conjugated {
                 explination: Some(Explination {
                     stem_range: 0..stem.len(),
-                    ending_range: stem.len()..conjugated.len(),
+                    ending_range: stem.len()..word.len(),
                     stem_comment,
                     ending_comment,
                 }),
-                regularity,
-                conjugated,
-            };
+                word,
+            }];
+            return (regularity, words);
         }
         Conjugation::Subjunctive(tense, person, number) => {
-            let prefix = match tense {
-                SubjunctiveTense::Present => match verb.ending {
+            let prefixes = match tense {
+                SubjunctiveTense::Present => vec![match verb.ending {
                     Ending::Ar if (person, number) == (Person::Second, Number::Plural) => "é",
                     Ending::Ar => "e",
                     Ending::Er | Ending::Ir
@@ -447,14 +454,14 @@ fn conjugate(verb: &Verb, conjugation: &Conjugation, use_irregular: bool) -> Con
                         "á"
                     }
                     Ending::Er | Ending::Ir => "a",
-                },
+                }],
                 SubjunctiveTense::Imperfect => match verb.ending {
-                    Ending::Ar => "ara",
-                    Ending::Er | Ending::Ir => "iera",
+                    Ending::Ar => vec!["ara", "ase"],
+                    Ending::Er | Ending::Ir => vec!["iera", "iese"],
                 },
                 SubjunctiveTense::Future => match verb.ending {
-                    Ending::Ar => "are",
-                    Ending::Er | Ending::Ir => "iere",
+                    Ending::Ar => vec!["are"],
+                    Ending::Er | Ending::Ir => vec!["iere"],
                 },
             };
             let suffix = match (person, number) {
@@ -464,11 +471,16 @@ fn conjugate(verb: &Verb, conjugation: &Conjugation, use_irregular: bool) -> Con
                 (Person::Second, Number::Plural) => "is",
                 (Person::Third, Number::Plural) => "n",
             };
-            if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
-                format!("{reflexive_pronoun} {}{prefix}{suffix}", verb.stem)
-            } else {
-                format!("{}{prefix}{suffix}", verb.stem)
-            }
+            prefixes
+                .into_iter()
+                .map(|prefix| {
+                    if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
+                        format!("{reflexive_pronoun} {}{prefix}{suffix}", verb.stem)
+                    } else {
+                        format!("{}{prefix}{suffix}", verb.stem)
+                    }
+                })
+                .collect()
         }
         Conjugation::Imperative(tense, person, number) => match tense {
             ImperativeTense::Affirmative => {
@@ -496,7 +508,7 @@ fn conjugate(verb: &Verb, conjugation: &Conjugation, use_irregular: bool) -> Con
                     },
                 };
                 let reflexive_pronoun = verb.reflexive_pronoun(person, number).unwrap_or("");
-                format!("¡{}{ending}{reflexive_pronoun}!", verb.stem)
+                vec![format!("¡{}{ending}{reflexive_pronoun}!", verb.stem)]
             }
             ImperativeTense::Negative => {
                 let ending = match verb.ending {
@@ -515,107 +527,133 @@ fn conjugate(verb: &Verb, conjugation: &Conjugation, use_irregular: bool) -> Con
                         (Person::Third, Number::Plural) => "an",
                     },
                 };
-                if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
-                    format!("¡no {reflexive_pronoun} {}{ending}!", verb.stem)
-                } else {
-                    format!("¡no {}{ending}!", verb.stem)
-                }
+                vec![
+                    if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
+                        format!("¡no {reflexive_pronoun} {}{ending}!", verb.stem)
+                    } else {
+                        format!("¡no {}{ending}!", verb.stem)
+                    },
+                ]
             }
         },
         Conjugation::Progressive(tense, person, number) => {
-            let estar = conjugate(
+            let gerund;
+            let (estar_regularity, estar) = conjugate(
                 &estar(),
                 &Conjugation::Indicative(tense, person, number),
                 true,
             );
-            let gerund;
             (gerund, regularity) = verb.gerund();
-            if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
-                format!("{reflexive_pronoun} {} {gerund}", estar.conjugated)
-            } else {
-                format!("{} {gerund}", estar.conjugated)
-            }
+            regularity = regularity.combine(estar_regularity);
+            estar
+                .into_iter()
+                .flat_map(|estar| {
+                    if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
+                        vec![
+                            format!("{reflexive_pronoun} {} {gerund}", estar.word),
+                            format!("{} {gerund}{reflexive_pronoun}", estar.word),
+                        ]
+                    } else {
+                        vec![format!("{} {gerund}", estar.word)]
+                    }
+                })
+                .collect()
         }
         Conjugation::Perfect(tense, person, number) => {
             let past_participle;
             (past_participle, regularity) = verb.past_participle();
-            let haber = conjugate(
+            let (haber_regularity, haber) = conjugate(
                 &haber(),
                 &Conjugation::Indicative(tense, person, number),
-                true,
+                use_irregular,
             );
-            if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
-                format!("{reflexive_pronoun} {} {past_participle}", haber.conjugated)
-            } else {
-                format!("{} {past_participle}", haber.conjugated)
-            }
+            regularity = regularity.combine(haber_regularity);
+            haber
+                .into_iter()
+                .map(|haber| {
+                    if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
+                        format!("{reflexive_pronoun} {} {past_participle}", haber.word)
+                    } else {
+                        format!("{} {past_participle}", haber.word)
+                    }
+                })
+                .collect()
         }
         Conjugation::SubjunctivePerfect(tense, person, number) => {
             let past_participle;
             (past_participle, regularity) = verb.past_participle();
-            let haber = conjugate(
+            let (haber_regularity, haber) = conjugate(
                 &haber(),
                 &Conjugation::Subjunctive(tense, person, number),
-                true,
+                use_irregular,
             );
-            if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
-                format!("{reflexive_pronoun} {} {past_participle}", haber.conjugated)
-            } else {
-                format!("{} {past_participle}", haber.conjugated)
-            }
+            regularity = regularity.combine(haber_regularity);
+            haber
+                .into_iter()
+                .map(|haber| {
+                    if let Some(reflexive_pronoun) = verb.reflexive_pronoun(person, number) {
+                        format!("{reflexive_pronoun} {} {past_participle}", haber.word)
+                    } else {
+                        format!("{} {past_participle}", haber.word)
+                    }
+                })
+                .collect()
         }
     };
-    Conjugated {
-        explination: None,
-        conjugated,
-        regularity,
-    }
+
+    let conjugated = words
+        .into_iter()
+        .map(|word| Conjugated {
+            word,
+            explination: None,
+        })
+        .collect();
+    (regularity, conjugated)
 }
 
 #[rustfmt::skip]
 fn haber() -> Verb {
-    let indicative = |tense, person, number, word: &str| -> (Conjugation, String) {
-        (Conjugation::Indicative(tense, person, number), word.to_owned())
-    };
-    let subjunctive = |tense, person, number, word: &str| -> (Conjugation, String) {
-        (Conjugation::Subjunctive(tense, person, number), word.to_owned())
-    };
-    let irregulars = [
+    use Conjugation::*;
+    let irregulars = multimap::multimap!(
         // Present:
-        indicative(IndicativeTense::Present, Person::First, Number::Singular, "he"),
-        indicative(IndicativeTense::Present, Person::First, Number::Plural, "hemos"),
-        indicative(IndicativeTense::Present, Person::Second, Number::Singular, "has"),
-        indicative(IndicativeTense::Present, Person::Third, Number::Singular, "ha"),
-        indicative(IndicativeTense::Present, Person::Third, Number::Plural, "han"),
+        Indicative(IndicativeTense::Present, Person::First, Number::Singular) => "he".to_owned(),
+        Indicative(IndicativeTense::Present, Person::First, Number::Plural) => "hemos".to_owned(),
+        Indicative(IndicativeTense::Present, Person::Second, Number::Singular) => "has".to_owned(),
+        Indicative(IndicativeTense::Present, Person::Third, Number::Singular) => "ha".to_owned(),
+        Indicative(IndicativeTense::Present, Person::Third, Number::Plural) => "han".to_owned(),
+
         // Preterite:
-        indicative(IndicativeTense::Preterite, Person::First, Number::Singular, "hube"),
-        indicative(IndicativeTense::Preterite, Person::First, Number::Plural, "hubimos"),
-        indicative(IndicativeTense::Preterite, Person::Second, Number::Singular, "hubiste"),
-        indicative(IndicativeTense::Preterite, Person::Second, Number::Plural, "hubisteis"),
-        indicative(IndicativeTense::Preterite, Person::Third, Number::Singular, "hubo"),
-        indicative(IndicativeTense::Preterite, Person::Third, Number::Plural, "hubieron"),
+        Indicative(IndicativeTense::Preterite, Person::First, Number::Singular) => "hube".to_owned(),
+        Indicative(IndicativeTense::Preterite, Person::First, Number::Plural) => "hubimos".to_owned(),
+        Indicative(IndicativeTense::Preterite, Person::Second, Number::Singular) => "hubiste".to_owned(),
+        Indicative(IndicativeTense::Preterite, Person::Second, Number::Plural) => "hubisteis".to_owned(),
+        Indicative(IndicativeTense::Preterite, Person::Third, Number::Singular) => "hubo".to_owned(),
+        Indicative(IndicativeTense::Preterite, Person::Third, Number::Plural) => "hubieron".to_owned(),
+
         // Subjunctive Present:
-        subjunctive(SubjunctiveTense::Present, Person::First, Number::Singular, "haya"),
-        subjunctive(SubjunctiveTense::Present, Person::First, Number::Plural, "hayamos"),
-        subjunctive(SubjunctiveTense::Present, Person::Second, Number::Singular, "hayas"),
-        subjunctive(SubjunctiveTense::Present, Person::Second, Number::Plural, "hayáis"),
-        subjunctive(SubjunctiveTense::Present, Person::Third, Number::Singular, "haya"),
-        subjunctive(SubjunctiveTense::Present, Person::Third, Number::Plural, "hayan"),
+        Subjunctive(SubjunctiveTense::Present, Person::First, Number::Singular) => "haya".to_owned(),
+        Subjunctive(SubjunctiveTense::Present, Person::First, Number::Plural) => "hayamos".to_owned(),
+        Subjunctive(SubjunctiveTense::Present, Person::Second, Number::Singular) => "hayas".to_owned(),
+        Subjunctive(SubjunctiveTense::Present, Person::Second, Number::Plural) => "hayáis".to_owned(),
+        Subjunctive(SubjunctiveTense::Present, Person::Third, Number::Singular) => "haya".to_owned(),
+        Subjunctive(SubjunctiveTense::Present, Person::Third, Number::Plural) => "hayan".to_owned(),
+
         // Subjunctive Imperfect:
-        subjunctive(SubjunctiveTense::Imperfect, Person::First, Number::Singular, "hubiera"),
-        subjunctive(SubjunctiveTense::Imperfect, Person::First, Number::Plural, "hubiéramos"),
-        subjunctive(SubjunctiveTense::Imperfect, Person::Second, Number::Singular, "huberias"),
-        subjunctive(SubjunctiveTense::Imperfect, Person::Second, Number::Plural, "hubierais"),
-        subjunctive(SubjunctiveTense::Imperfect, Person::Third, Number::Singular, "hubiera"),
-        subjunctive(SubjunctiveTense::Imperfect, Person::Third, Number::Plural, "hubieran"),
+        Subjunctive(SubjunctiveTense::Imperfect, Person::First, Number::Singular) => "hubiera".to_owned(),
+        Subjunctive(SubjunctiveTense::Imperfect, Person::First, Number::Plural) => "hubiéramos".to_owned(),
+        Subjunctive(SubjunctiveTense::Imperfect, Person::Second, Number::Singular) => "huberias".to_owned(),
+        Subjunctive(SubjunctiveTense::Imperfect, Person::Second, Number::Plural) => "hubierais".to_owned(),
+        Subjunctive(SubjunctiveTense::Imperfect, Person::Third, Number::Singular) => "hubiera".to_owned(),
+        Subjunctive(SubjunctiveTense::Imperfect, Person::Third, Number::Plural) => "hubieran".to_owned(),
+
         // Subjunctive Future:
-        subjunctive(SubjunctiveTense::Future, Person::First, Number::Singular, "hubiere"),
-        subjunctive(SubjunctiveTense::Future, Person::First, Number::Plural, "hubiéremos"),
-        subjunctive(SubjunctiveTense::Future, Person::Second, Number::Singular, "huberies"),
-        subjunctive(SubjunctiveTense::Future, Person::Second, Number::Plural, "hubiereis"),
-        subjunctive(SubjunctiveTense::Future, Person::Third, Number::Singular, "hubiere"),
-        subjunctive(SubjunctiveTense::Future, Person::Third, Number::Plural, "hubieren"),
-    ];
+        Subjunctive(SubjunctiveTense::Future, Person::First, Number::Singular) => "hubiere".to_owned(),
+        Subjunctive(SubjunctiveTense::Future, Person::First, Number::Plural) => "hubiéremos".to_owned(),
+        Subjunctive(SubjunctiveTense::Future, Person::Second, Number::Singular) => "huberies".to_owned(),
+        Subjunctive(SubjunctiveTense::Future, Person::Second, Number::Plural) => "hubiereis".to_owned(),
+        Subjunctive(SubjunctiveTense::Future, Person::Third, Number::Singular) => "hubiere".to_owned(),
+        Subjunctive(SubjunctiveTense::Future, Person::Third, Number::Plural) => "hubieren".to_owned(),
+    );
     Verb {
         stem: "hab".to_owned(),
         ending: Ending::Er,
@@ -623,30 +661,29 @@ fn haber() -> Verb {
         irregular_future_stem: Some("habr".to_owned()),
         irregular_gerund: None,
         irregular_past_participle: None,
-        irregulars: HashMap::from(irregulars),
         translation: Translation::default(),
+        irregulars,
     }
 }
 
 #[rustfmt::skip]
 fn estar() -> Verb {
-    let indicative = |tense, person, number, word: &str| -> (Conjugation, String) {
-        (Conjugation::Indicative(tense, person, number), word.to_owned())
-    };
-    let irregulars = [
+    use Conjugation::*;
+    let irregulars = multimap::multimap!(
         // Present:
-        indicative(IndicativeTense::Present, Person::First, Number::Singular, "estoy"),
-        indicative(IndicativeTense::Present, Person::Second, Number::Singular, "estás"),
-        indicative(IndicativeTense::Present, Person::Third, Number::Singular, "está"),
-        indicative(IndicativeTense::Present, Person::Third, Number::Plural, "están"),
+        Indicative(IndicativeTense::Present, Person::First, Number::Singular) => "estoy".to_owned(),
+        Indicative(IndicativeTense::Present, Person::Second, Number::Singular) => "estás".to_owned(),
+        Indicative(IndicativeTense::Present, Person::Third, Number::Singular) => "está".to_owned(),
+        Indicative(IndicativeTense::Present, Person::Third, Number::Plural) => "están".to_owned(),
+
         // Preterite:
-        indicative(IndicativeTense::Preterite, Person::First, Number::Singular, "estuve"),
-        indicative(IndicativeTense::Preterite, Person::First, Number::Plural, "estuvimos"),
-        indicative(IndicativeTense::Preterite, Person::Second, Number::Singular, "estuviste"),
-        indicative(IndicativeTense::Preterite, Person::Second, Number::Plural, "estuvisteis"),
-        indicative(IndicativeTense::Preterite, Person::Third, Number::Singular, "estuvo"),
-        indicative(IndicativeTense::Preterite, Person::Third, Number::Plural, "estuvieron"),
-    ];
+        Indicative(IndicativeTense::Preterite, Person::First, Number::Singular) => "estuve".to_owned(),
+        Indicative(IndicativeTense::Preterite, Person::First, Number::Plural) => "estuvimos".to_owned(),
+        Indicative(IndicativeTense::Preterite, Person::Second, Number::Singular) => "estuviste".to_owned(),
+        Indicative(IndicativeTense::Preterite, Person::Second, Number::Plural) => "estuvisteis".to_owned(),
+        Indicative(IndicativeTense::Preterite, Person::Third, Number::Singular) => "estuvo".to_owned(),
+        Indicative(IndicativeTense::Preterite, Person::Third, Number::Plural) => "estuvieron".to_owned(),
+    );
     Verb {
         stem: "est".to_owned(),
         ending: Ending::Ar,
@@ -654,8 +691,8 @@ fn estar() -> Verb {
         irregular_future_stem: None,
         irregular_gerund: None,
         irregular_past_participle: None,
-        irregulars: HashMap::from(irregulars),
         translation: Translation::default(),
+        irregulars,
     }
 }
 
@@ -711,10 +748,9 @@ fn correctness(input: &str, answer: &str) -> Correctness {
     }
 }
 
-fn highlight_irregular_letters(verb: &Verb, conjugation: &Conjugation, irregular: &str) -> String {
-    let regular = conjugate(verb, conjugation, false);
+fn highlight_irregular_letters(regular: &str, irregular: &str) -> String {
     let irregular: Vec<char> = irregular.chars().collect();
-    let regular: Vec<char> = regular.conjugated.chars().collect();
+    let regular: Vec<char> = regular.chars().collect();
     let strategy = seal::pair::NeedlemanWunsch::new(1, -1, -1, -1);
     let set: seal::pair::AlignmentSet<seal::pair::InMemoryAlignmentMatrix> =
         seal::pair::AlignmentSet::new(irregular.len(), regular.len(), strategy, |x, y| {
@@ -743,7 +779,7 @@ fn highlight_irregular_letters(verb: &Verb, conjugation: &Conjugation, irregular
 
 pub fn cli() {
     let cli = Cli::parse();
-    let mut rng = rand::rng();
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1);
 
     let (verbs, _): (Vec<Verb>, _) =
         bincode::serde::decode_from_slice(include_bytes!("verbs.bin"), bincode::config::standard())
@@ -752,7 +788,7 @@ pub fn cli() {
     let verb = verbs.choose(&mut rng).unwrap();
     let conjugation: Conjugation = rng.random();
     let translation = conjugate_translation(&verb.translation, &conjugation);
-    let answer = conjugate(verb, &conjugation, true);
+    let (regularity, answer) = conjugate(verb, &conjugation, true);
 
     match cli.command {
         Command::Conjugate => {
@@ -762,49 +798,65 @@ pub fn cli() {
             );
         }
         Command::Translate => {
-            println!("translate: \"{translation}\" ({conjugation})",);
+            println!("translate: \"{translation}\" ({conjugation})");
         }
     }
 
     loop {
         let input = get_line().to_lowercase();
         let input = input.trim();
-        match correctness(input, &answer.conjugated) {
-            Correctness::Perfect => {
-                println!("correct!");
-                break;
+
+        let correct_message =
+            answer
+                .iter()
+                .find_map(|answer| match correctness(input, &answer.word) {
+                    Correctness::Perfect => Some(format!("correct!")),
+                    Correctness::Punctuation => Some(format!(
+                        "correct, but keep punctuation in mind (\"{input}\" vs \"{}\")",
+                        answer.word,
+                    )),
+                    _ => None,
+                });
+        if let Some(message) = correct_message {
+            println!("{message}");
+            break;
+        }
+
+        println!("incorrect, want to try again? (y/n)");
+
+        if get_line().to_lowercase().trim() == "y" {
+            if regularity == Regularity::Irregular {
+                println!("try again! (hint: it is irregular)");
+            } else {
+                println!("try again!");
             }
-            Correctness::Punctuation => {
-                println!(
-                    "correct, but keep punctuation in mind (\"{input}\" vs \"{}\")",
-                    answer.conjugated,
-                );
-                break;
-            }
-            Correctness::Wrong => {
-                println!("incorrect, want to try again? (y/n)");
-                if get_line().to_lowercase().trim() == "y" {
-                    if answer.regularity == Regularity::Irregular {
-                        println!("try again! (hint: it is irregular)");
-                    } else {
-                        println!("try again!");
-                    }
-                } else {
-                    let (print, regularity) = if answer.regularity == Regularity::Irregular {
-                        let print =
-                            highlight_irregular_letters(verb, &conjugation, &answer.conjugated);
-                        (print, "irregular".red())
-                    } else {
-                        (answer.conjugated, "regular".white())
-                    };
+        } else {
+            println!(
+                "correct answer{}",
+                if answer.len() > 1 { "s: " } else { ": " }
+            );
+
+            if regularity == Regularity::Irregular {
+                let (_, regulars) = conjugate(verb, &conjugation, false);
+                for (regular, answer) in regulars.iter().zip(answer.iter()) {
+                    let print = highlight_irregular_letters(&regular.word, &answer.word);
+                    println!("\t\"{print}\" ({})", "irregular".red());
+
                     if let Some(explination) = &answer.explination {
-                        println!("the correct answer is {}", explination.render(&print))
-                    } else {
-                        println!("the correct answer is \"{print}\" ({regularity})");
+                        println!("{}", explination.render(&answer.word))
                     }
-                    break;
+                }
+            } else {
+                for answer in &answer {
+                    println!("\t\"{}\" ({})", answer.word, "regular".white());
+
+                    if let Some(explination) = &answer.explination {
+                        println!("{}", explination.render(&answer.word))
+                    }
                 }
             }
+
+            break;
         }
     }
 }
